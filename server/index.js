@@ -88,6 +88,9 @@ function requireUser(req, res, next) {
 }
 
 app.get("/auth/me", (req, res) => {
+  // #region agent log
+  fetch('http://127.0.0.1:7457/ingest/4d2c2020-e1c4-403a-b635-1990ce89cee5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1b0b7f'},body:JSON.stringify({sessionId:'1b0b7f',location:'server/index.js:91',message:'/auth/me called',data:{hasSession:!!req.session,hasUser:!!req.session?.user,sessionID:req.sessionID,pid:process.pid},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
   if (!req.session?.user) return res.status(401).json({ error: "Not logged in" });
   const { id, email, display_name, avatar_url, provider, table_label } = req.session.user;
   res.json({ id, email, display_name, avatar_url, provider, table_label, is_admin: isAdminEmail(email) });
@@ -192,8 +195,16 @@ app.get("/auth/google/callback", async (req, res) => {
   req.session.user = user;
   // Same origin (production): session cookie is set on this response, redirect directly.
   // Different origin (local dev: backend :8080, frontend :3000): use one-time token handoff.
+  // #region agent log
+  fetch('http://127.0.0.1:7457/ingest/4d2c2020-e1c4-403a-b635-1990ce89cee5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1b0b7f'},body:JSON.stringify({sessionId:'1b0b7f',location:'server/index.js:195',message:'OAuth callback: about to redirect',data:{sameOrigin:APP_URL===FRONTEND_URL,APP_URL,FRONTEND_URL,sessionID:req.sessionID,pid:process.pid,userEmail:user.email},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+  // #endregion
   if (APP_URL === FRONTEND_URL) {
-    return req.session.save(() => res.redirect(FRONTEND_URL));
+    return req.session.save((err) => {
+      // #region agent log
+      fetch('http://127.0.0.1:7457/ingest/4d2c2020-e1c4-403a-b635-1990ce89cee5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1b0b7f'},body:JSON.stringify({sessionId:'1b0b7f',location:'server/index.js:198',message:'session.save callback',data:{saveErr:err?.message||null,sessionID:req.sessionID,pid:process.pid},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      res.redirect(FRONTEND_URL);
+    });
   }
   const handoff = createHandoffToken(user);
   res.redirect(`${FRONTEND_URL}${FRONTEND_URL.includes("?") ? "&" : "?"}session=${handoff}`);
