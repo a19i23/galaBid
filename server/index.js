@@ -28,18 +28,9 @@ pool.on("error", (err) => {
 
 // Retry a query once if the connection was terminated (e.g. DB machine restarted)
 async function dbQuery(text, params) {
-  // #region agent log
-  fetch('http://127.0.0.1:7457/ingest/4d2c2020-e1c4-403a-b635-1990ce89cee5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1b0b7f'},body:JSON.stringify({sessionId:'1b0b7f',location:'server/index.js:31',message:'dbQuery called',data:{query:typeof text==='string'?text.slice(0,60):text},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-  // #endregion
   try {
-    // #region agent log
-    fetch('http://127.0.0.1:7457/ingest/4d2c2020-e1c4-403a-b635-1990ce89cee5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1b0b7f'},body:JSON.stringify({sessionId:'1b0b7f',location:'server/index.js:35',message:'about to call pool.query',data:{},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     return await pool.query(text, params);
   } catch (err) {
-    // #region agent log
-    fetch('http://127.0.0.1:7457/ingest/4d2c2020-e1c4-403a-b635-1990ce89cee5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1b0b7f'},body:JSON.stringify({sessionId:'1b0b7f',location:'server/index.js:40',message:'dbQuery caught error',data:{error:err.message},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     if (err.message === "Connection terminated unexpectedly") {
       await new Promise((r) => setTimeout(r, 1500));
       return await pool.query(text, params);
@@ -473,18 +464,8 @@ const requireAdmin = (req, res, next) => {
 
 // ─── REST: Items ──────────────────────────────────────────────────────────────
 app.get("/api/items", async (req, res) => {
-  try {
-    const { rows } = await dbQuery("SELECT * FROM auction_items ORDER BY id");
-    // #region agent log
-    fetch('http://127.0.0.1:7457/ingest/4d2c2020-e1c4-403a-b635-1990ce89cee5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1b0b7f'},body:JSON.stringify({sessionId:'1b0b7f',location:'server/index.js:477',message:'/api/items success',data:{count:rows.length},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
-    res.json(rows);
-  } catch (err) {
-    // #region agent log
-    fetch('http://127.0.0.1:7457/ingest/4d2c2020-e1c4-403a-b635-1990ce89cee5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1b0b7f'},body:JSON.stringify({sessionId:'1b0b7f',location:'server/index.js:482',message:'/api/items ERROR',data:{error:err.message},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
-    res.status(500).json({ error: err.message });
-  }
+  const { rows } = await dbQuery("SELECT * FROM auction_items ORDER BY id");
+  res.json(rows);
 });
 
 app.get("/api/items/:id/bids", async (req, res) => {
