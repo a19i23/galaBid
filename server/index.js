@@ -15,6 +15,16 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
 });
+
+// Prevent pool idle-client errors from crashing the process
+pool.on("error", (err) => {
+  console.error("pg pool error (non-fatal):", err.message);
+});
+
+// Prevent any uncaught async route error from taking down the server
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection (server kept running):", reason?.message ?? reason);
+});
 const APP_URL = process.env.APP_URL || "http://localhost:8080";
 const CORS_ORIGIN = process.env.CORS_ORIGIN || (process.env.NODE_ENV === "production" ? APP_URL : "http://localhost:3000");
 // Where to send the user after OAuth (e.g. React dev server in dev)
@@ -146,14 +156,20 @@ app.get("/auth/google/callback", async (req, res) => {
   const provider = "google";
   const provider_id = profile.id;
 
-  const { rows } = await pool.query(
-    `INSERT INTO users (email, display_name, avatar_url, provider, provider_id, updated_at)
-     VALUES ($1,$2,$3,$4,$5,NOW())
-     ON CONFLICT (provider, provider_id) DO UPDATE SET
-       email=EXCLUDED.email, display_name=EXCLUDED.display_name, avatar_url=EXCLUDED.avatar_url, updated_at=NOW()
-     RETURNING id, email, display_name, avatar_url, provider, table_label`,
-    [email, display_name, avatar_url, provider, provider_id]
-  );
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `INSERT INTO users (email, display_name, avatar_url, provider, provider_id, updated_at)
+       VALUES ($1,$2,$3,$4,$5,NOW())
+       ON CONFLICT (provider, provider_id) DO UPDATE SET
+         email=EXCLUDED.email, display_name=EXCLUDED.display_name, avatar_url=EXCLUDED.avatar_url, updated_at=NOW()
+       RETURNING id, email, display_name, avatar_url, provider, table_label`,
+      [email, display_name, avatar_url, provider, provider_id]
+    ));
+  } catch (err) {
+    console.error("OAuth DB error:", err.message);
+    return res.redirect(`${FRONTEND_URL}?auth_error=db`);
+  }
   const user = rows[0];
   req.session.user = user;
   // Same origin (production): session cookie is set on this response, redirect directly.
