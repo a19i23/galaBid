@@ -96,9 +96,6 @@ function requireUser(req, res, next) {
 }
 
 app.get("/auth/me", (req, res) => {
-  // #region agent log
-  console.log(`[DEBUG /auth/me] sid=${req.sessionID} hasUser=${!!req.session?.user} pid=${process.pid}`);
-  // #endregion
   if (!req.session?.user) return res.status(401).json({ error: "Not logged in" });
   const { id, email, display_name, avatar_url, provider, table_label } = req.session.user;
   res.json({ id, email, display_name, avatar_url, provider, table_label, is_admin: isAdminEmail(email) });
@@ -203,16 +200,8 @@ app.get("/auth/google/callback", async (req, res) => {
   req.session.user = user;
   // Same origin (production): session cookie is set on this response, redirect directly.
   // Different origin (local dev: backend :8080, frontend :3000): use one-time token handoff.
-  // #region agent log
-  console.log(`[DEBUG oauth-cb] sameOrigin=${APP_URL===FRONTEND_URL} sid=${req.sessionID} pid=${process.pid} email=${user.email} proto=${req.protocol} secure=${req.secure}`);
-  // #endregion
   if (APP_URL === FRONTEND_URL) {
-    return req.session.save((err) => {
-      // #region agent log
-      console.log(`[DEBUG session-save] saveErr=${err?.message||null} sid=${req.sessionID} pid=${process.pid}`);
-      // #endregion
-      res.redirect(FRONTEND_URL);
-    });
+    return req.session.save(() => res.redirect(FRONTEND_URL));
   }
   const handoff = createHandoffToken(user);
   res.redirect(`${FRONTEND_URL}${FRONTEND_URL.includes("?") ? "&" : "?"}session=${handoff}`);
