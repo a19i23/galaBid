@@ -1,26 +1,23 @@
-app = "galabid"
-primary_region = "lax"
+# fly.toml app configuration file generated for app-green-frog-6941 on 2026-03-02T04:22:27Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'app-green-frog-6941'
+primary_region = 'iad'
 
 [build]
-  builder = "heroku/buildpacks:20"
-
-[env]
-  NODE_ENV = "production"
-  PORT = "8080"
 
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = true
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
-
-  [http_service.concurrency]
-    type = "connections"
-    hard_limit = 500
-    soft_limit = 200
+  processes = ['app']
 
 [[vm]]
-  memory = "512mb"
-  cpu_kind = "shared"
+  memory = '1gb'
+  cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 256
