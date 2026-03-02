@@ -14,12 +14,30 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000,
+  connectionTimeoutMillis: 5000,
+  idleTimeoutMillis: 60000,
+  max: 5,
 });
 
 // Prevent pool idle-client errors from crashing the process
 pool.on("error", (err) => {
   console.error("pg pool error (non-fatal):", err.message);
 });
+
+// Retry a query once if the connection was terminated (e.g. DB machine restarted)
+async function dbQuery(text, params) {
+  try {
+    return await dbQuery(text, params);
+  } catch (err) {
+    if (err.message === "Connection terminated unexpectedly") {
+      await new Promise((r) => setTimeout(r, 1500));
+      return await dbQuery(text, params);
+    }
+    throw err;
+  }
+}
 
 // Prevent any uncaught async route error from taking down the server
 process.on("unhandledRejection", (reason) => {
@@ -78,7 +96,7 @@ app.get("/auth/me", (req, res) => {
 app.patch("/auth/me", requireUser, async (req, res) => {
   const { table_label } = req.body;
   const userId = req.session.user.id;
-  await pool.query(
+  await dbQuery(
     "UPDATE users SET table_label=$1, updated_at=NOW() WHERE id=$2",
     [table_label || null, userId]
   );
@@ -158,7 +176,7 @@ app.get("/auth/google/callback", async (req, res) => {
 
   let rows;
   try {
-    ({ rows } = await pool.query(
+    ({ rows } = await dbQuery(
       `INSERT INTO users (email, display_name, avatar_url, provider, provider_id, updated_at)
        VALUES ($1,$2,$3,$4,$5,NOW())
        ON CONFLICT (provider, provider_id) DO UPDATE SET
@@ -183,7 +201,7 @@ app.get("/auth/google/callback", async (req, res) => {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 async function checkSilentWindow() {
-  const { rows } = await pool.query(
+  const { rows } = await dbQuery(
     "SELECT key, value FROM settings WHERE key IN ('silent_start','silent_end')"
   );
   const s = Object.fromEntries(rows.map((r) => [r.key, r.value]));
@@ -196,18 +214,18 @@ async function checkSilentWindow() {
 // Auto-close open silent items once silent_end passes (checks every 30 s)
 setInterval(async () => {
   try {
-    const { rows: sr } = await pool.query("SELECT value FROM settings WHERE key='silent_end'");
+    const { rows: sr } = await dbQuery("SELECT value FROM settings WHERE key='silent_end'");
     const silentEnd = sr[0]?.value;
     if (!silentEnd) return;
     if (new Date(silentEnd) > new Date()) return;
 
-    const { rows: open } = await pool.query(
+    const { rows: open } = await dbQuery(
       "SELECT * FROM auction_items WHERE status='open' AND auction_type='silent'"
     );
     for (const item of open) {
-      await pool.query("UPDATE auction_items SET status='closed' WHERE id=$1", [item.id]);
+      await dbQuery("UPDATE auction_items SET status='closed' WHERE id=$1", [item.id]);
       if (item.bidder) {
-        await pool.query(
+        await dbQuery(
           `INSERT INTO payments (item_id, bidder, amount_cents, status)
            VALUES ($1,$2,$3,'pending') ON CONFLICT DO NOTHING`,
           [item.id, item.bidder, Number(item.current_bid) * 100]
@@ -225,7 +243,7 @@ app.post("/api/bid", requireUser, async (req, res) => {
   const user = req.session.user;
   const displayName = user.table_label ? `${user.display_name} (${user.table_label})` : user.display_name;
 
-  const { rows: settingsRows } = await pool.query("SELECT key, value FROM settings WHERE key = 'auction_open'");
+  const { rows: settingsRows } = await dbQuery("SELECT key, value FROM settings WHERE key = 'auction_open'");
   const auctionOpen = settingsRows.find((r) => r.key === "auction_open")?.value === "true";
   if (!auctionOpen) {
     return res.status(400).json({ error: "Bidding is not open yet. The host will start the auction." });
@@ -299,9 +317,9 @@ wss.on("connection", async (ws, req) => {
 
   try {
     const [items, settings, payments] = await Promise.all([
-      pool.query("SELECT * FROM auction_items ORDER BY id"),
-      pool.query("SELECT * FROM settings"),
-      pool.query("SELECT item_id, bidder, status FROM payments"),
+      dbQuery("SELECT * FROM auction_items ORDER BY id"),
+      dbQuery("SELECT * FROM settings"),
+      dbQuery("SELECT item_id, bidder, status FROM payments"),
     ]);
     ws.send(JSON.stringify({
       type: "INIT",
@@ -328,7 +346,7 @@ async function handleWsMessage(msg, ws) {
     // ── Silent auction bid ───────────────────────────────────────────────────
     case "PLACE_BID": {
       const { itemId, bidder } = msg;
-      const { rows: settingsRows } = await pool.query("SELECT key, value FROM settings WHERE key = 'auction_open'");
+      const { rows: settingsRows } = await dbQuery("SELECT key, value FROM settings WHERE key = 'auction_open'");
       const auctionOpen = settingsRows.find((r) => r.key === "auction_open")?.value === "true";
       if (!auctionOpen) {
         ws.send(JSON.stringify({ type: "BID_ERROR", message: "Bidding is not open yet. The host will start the auction." }));
@@ -381,19 +399,19 @@ async function handleWsMessage(msg, ws) {
     // ── Close item ───────────────────────────────────────────────────────────
     case "CLOSE_ITEM": {
       if (!isAdmin()) return deny();
-      const { rows } = await pool.query(
+      const { rows } = await dbQuery(
         "SELECT * FROM auction_items WHERE id=$1", [msg.itemId]
       );
       const item = rows[0];
       if (!item || item.status === "closed") break;
 
-      await pool.query(
+      await dbQuery(
         "UPDATE auction_items SET status='closed' WHERE id=$1", [msg.itemId]
       );
 
       // Create a pending payment record for the winner
       if (item.bidder) {
-        await pool.query(
+        await dbQuery(
           `INSERT INTO payments (item_id, bidder, amount_cents, status)
            VALUES ($1,$2,$3,'pending')
            ON CONFLICT DO NOTHING`,
@@ -407,15 +425,15 @@ async function handleWsMessage(msg, ws) {
     // ── Live auction bid ─────────────────────────────────────────────────────
     case "LIVE_BID": {
       if (!isAdmin()) return deny();
-      const { rows } = await pool.query("SELECT * FROM auction_items WHERE id=$1", [msg.itemId]);
+      const { rows } = await dbQuery("SELECT * FROM auction_items WHERE id=$1", [msg.itemId]);
       const item = rows[0];
       if (!item) break;
       const newBid = Number(item.current_bid) + Number(item.increment);
-      await pool.query(
+      await dbQuery(
         "UPDATE auction_items SET current_bid=$1, bidder=$2, bid_count=bid_count+1 WHERE id=$3",
         [newBid, msg.bidder, msg.itemId]
       );
-      await pool.query("INSERT INTO bids (item_id, bidder, amount) VALUES ($1,$2,$3)", [msg.itemId, msg.bidder, newBid]);
+      await dbQuery("INSERT INTO bids (item_id, bidder, amount) VALUES ($1,$2,$3)", [msg.itemId, msg.bidder, newBid]);
       broadcast({ type: "LIVE_BID_UPDATE", itemId: msg.itemId, newBid, bidder: msg.bidder, bidCount: Number(item.bid_count) + 1 });
       break;
     }
@@ -423,7 +441,7 @@ async function handleWsMessage(msg, ws) {
     // ── Update settings ──────────────────────────────────────────────────────
     case "UPDATE_SETTING": {
       if (!isAdmin()) return deny();
-      await pool.query(
+      await dbQuery(
         "INSERT INTO settings (key,value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2",
         [msg.key, msg.value]
       );
@@ -446,12 +464,12 @@ const requireAdmin = (req, res, next) => {
 
 // ─── REST: Items ──────────────────────────────────────────────────────────────
 app.get("/api/items", async (req, res) => {
-  const { rows } = await pool.query("SELECT * FROM auction_items ORDER BY id");
+  const { rows } = await dbQuery("SELECT * FROM auction_items ORDER BY id");
   res.json(rows);
 });
 
 app.get("/api/items/:id/bids", async (req, res) => {
-  const { rows } = await pool.query(
+  const { rows } = await dbQuery(
     "SELECT * FROM bids WHERE item_id=$1 ORDER BY placed_at DESC LIMIT 20",
     [req.params.id]
   );
@@ -461,7 +479,7 @@ app.get("/api/items/:id/bids", async (req, res) => {
 // ─── REST: Admin ──────────────────────────────────────────────────────────────
 app.post("/api/admin/items", requireAdmin, async (req, res) => {
   const { title, category, description, emoji, min_bid, increment, auction_type } = req.body;
-  const { rows } = await pool.query(
+  const { rows } = await dbQuery(
     `INSERT INTO auction_items (title, category, description, emoji, min_bid, current_bid, increment, auction_type)
      VALUES ($1,$2,$3,$4,$5,$5,$6,$7) RETURNING *`,
     [title, category, description, emoji || "🎁", min_bid, increment || 25, auction_type || "silent"]
@@ -472,7 +490,7 @@ app.post("/api/admin/items", requireAdmin, async (req, res) => {
 
 app.patch("/api/admin/items/:id", requireAdmin, async (req, res) => {
   const { title, category, description, emoji, min_bid, current_bid, increment, bidder, status, auction_type } = req.body;
-  const { rows } = await pool.query(
+  const { rows } = await dbQuery(
     `UPDATE auction_items SET
        title        = COALESCE($1, title),
        category     = COALESCE($2, category),
@@ -494,10 +512,10 @@ app.patch("/api/admin/items/:id", requireAdmin, async (req, res) => {
 
 
 app.post("/api/admin/reset", requireAdmin, async (req, res) => {
-  await pool.query("UPDATE auction_items SET current_bid=min_bid, bidder=NULL, bid_count=0, status='open'");
-  await pool.query("DELETE FROM bids");
-  await pool.query("DELETE FROM payments");
-  const { rows } = await pool.query("SELECT * FROM auction_items ORDER BY id");
+  await dbQuery("UPDATE auction_items SET current_bid=min_bid, bidder=NULL, bid_count=0, status='open'");
+  await dbQuery("DELETE FROM bids");
+  await dbQuery("DELETE FROM payments");
+  const { rows } = await dbQuery("SELECT * FROM auction_items ORDER BY id");
   broadcast({ type: "AUCTION_RESET", items: rows });
   res.json({ ok: true });
 });
@@ -505,9 +523,9 @@ app.post("/api/admin/reset", requireAdmin, async (req, res) => {
 // Full admin report
 app.get("/api/admin/report", requireAdmin, async (req, res) => {
   const [items, bids, payments] = await Promise.all([
-    pool.query("SELECT * FROM auction_items ORDER BY id"),
-    pool.query("SELECT * FROM bids ORDER BY placed_at DESC"),
-    pool.query("SELECT * FROM payments ORDER BY created_at DESC"),
+    dbQuery("SELECT * FROM auction_items ORDER BY id"),
+    dbQuery("SELECT * FROM bids ORDER BY placed_at DESC"),
+    dbQuery("SELECT * FROM payments ORDER BY created_at DESC"),
   ]);
   const totalCollected = payments.rows
     .filter((p) => p.status === "paid")
@@ -543,7 +561,7 @@ app.post("/api/checkout", async (req, res) => {
 
   // All closed items won by this bidder (any of the identifiers) with no completed payment
   const placeholders = bidderIdentifiers.map((_, i) => `$${i + 1}`).join(",");
-  const { rows: wonItems } = await pool.query(
+  const { rows: wonItems } = await dbQuery(
     `SELECT ai.*
      FROM auction_items ai
      LEFT JOIN payments p ON p.item_id = ai.id AND p.bidder = ai.bidder AND p.status = 'paid'
@@ -589,7 +607,7 @@ app.post("/api/checkout", async (req, res) => {
 
     for (const item of wonItems) {
       try {
-        await pool.query(
+        await dbQuery(
           `INSERT INTO payments (item_id, bidder, amount_cents, stripe_session_id, status, user_id)
            VALUES ($1,$2,$3,$4,'pending',$5)
            ON CONFLICT (stripe_session_id) DO NOTHING`,
@@ -597,7 +615,7 @@ app.post("/api/checkout", async (req, res) => {
         );
       } catch (e) {
         if (e.code === "42703") {
-          await pool.query(
+          await dbQuery(
             `INSERT INTO payments (item_id, bidder, amount_cents, stripe_session_id, status)
              VALUES ($1,$2,$3,$4,'pending')
              ON CONFLICT (stripe_session_id) DO NOTHING`,
@@ -618,7 +636,7 @@ app.post("/api/checkout", async (req, res) => {
 app.get("/api/checkout/status", async (req, res) => {
   const { bidder } = req.query;
   if (!bidder) return res.status(400).json({ error: "bidder required" });
-  const { rows } = await pool.query(
+  const { rows } = await dbQuery(
     `SELECT ai.id, ai.title, ai.emoji, ai.current_bid, p.status, p.paid_at
      FROM auction_items ai
      JOIN payments p ON p.item_id = ai.id
@@ -644,7 +662,7 @@ app.post("/webhooks/stripe", async (req, res) => {
     const session = event.data.object;
     const { bidder, item_ids } = session.metadata;
 
-    await pool.query(
+    await dbQuery(
       `UPDATE payments
        SET status='paid', paid_at=NOW(), stripe_payment_intent=$1
        WHERE stripe_session_id=$2`,
@@ -662,7 +680,7 @@ app.post("/webhooks/stripe", async (req, res) => {
   }
 
   if (event.type === "checkout.session.expired") {
-    await pool.query(
+    await dbQuery(
       "UPDATE payments SET status='failed' WHERE stripe_session_id=$1",
       [event.data.object.id]
     );
