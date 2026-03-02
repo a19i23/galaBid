@@ -7,6 +7,7 @@ const cors = require("cors");
 const path = require("path");
 const cookieParser = require("cookie-parser");
 const session = require("express-session");
+const PgSession = require("connect-pg-simple")(session);
 const Stripe = require("stripe");
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -69,6 +70,11 @@ app.use(express.json());
 
 const cookieParserMw = cookieParser();
 const sessionMw = session({
+  store: new PgSession({
+    pool,
+    tableName: "user_sessions",
+    createTableIfMissing: true,
+  }),
   secret: process.env.SESSION_SECRET || "galabid-secret-change-in-production",
   resave: false,
   saveUninitialized: false,
@@ -89,7 +95,7 @@ function requireUser(req, res, next) {
 
 app.get("/auth/me", (req, res) => {
   // #region agent log
-  fetch('http://127.0.0.1:7457/ingest/4d2c2020-e1c4-403a-b635-1990ce89cee5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1b0b7f'},body:JSON.stringify({sessionId:'1b0b7f',location:'server/index.js:91',message:'/auth/me called',data:{hasSession:!!req.session,hasUser:!!req.session?.user,sessionID:req.sessionID,pid:process.pid},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+  console.log(`[DEBUG /auth/me] sid=${req.sessionID} hasUser=${!!req.session?.user} pid=${process.pid}`);
   // #endregion
   if (!req.session?.user) return res.status(401).json({ error: "Not logged in" });
   const { id, email, display_name, avatar_url, provider, table_label } = req.session.user;
@@ -196,12 +202,12 @@ app.get("/auth/google/callback", async (req, res) => {
   // Same origin (production): session cookie is set on this response, redirect directly.
   // Different origin (local dev: backend :8080, frontend :3000): use one-time token handoff.
   // #region agent log
-  fetch('http://127.0.0.1:7457/ingest/4d2c2020-e1c4-403a-b635-1990ce89cee5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1b0b7f'},body:JSON.stringify({sessionId:'1b0b7f',location:'server/index.js:195',message:'OAuth callback: about to redirect',data:{sameOrigin:APP_URL===FRONTEND_URL,APP_URL,FRONTEND_URL,sessionID:req.sessionID,pid:process.pid,userEmail:user.email},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+  console.log(`[DEBUG oauth-cb] sameOrigin=${APP_URL===FRONTEND_URL} sid=${req.sessionID} pid=${process.pid} email=${user.email}`);
   // #endregion
   if (APP_URL === FRONTEND_URL) {
     return req.session.save((err) => {
       // #region agent log
-      fetch('http://127.0.0.1:7457/ingest/4d2c2020-e1c4-403a-b635-1990ce89cee5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1b0b7f'},body:JSON.stringify({sessionId:'1b0b7f',location:'server/index.js:198',message:'session.save callback',data:{saveErr:err?.message||null,sessionID:req.sessionID,pid:process.pid},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+      console.log(`[DEBUG session-save] saveErr=${err?.message||null} sid=${req.sessionID} pid=${process.pid}`);
       // #endregion
       res.redirect(FRONTEND_URL);
     });
