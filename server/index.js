@@ -200,7 +200,7 @@ setInterval(async () => {
       broadcast({ type: "ITEM_CLOSED", itemId: item.id, winner: item.bidder, amount: item.current_bid });
     }
     if (open.length > 0) console.log(`[auto-close] closed ${open.length} silent item(s).`);
-  } catch (e) { console.error("auto-close error:", e); }
+  } catch (e) { /* DB unavailable (machine sleeping) — will retry next interval */ }
 }, 30_000);
 
 // ─── REST: Place bid (session-based, for logged-in bidders) ────────────────────
