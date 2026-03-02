@@ -50,6 +50,8 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || (process.env.NODE_ENV === "produc
 const FRONTEND_URL = process.env.FRONTEND_URL || APP_URL;
 
 const app = express();
+// Trust Fly.io's TLS-terminating proxy so express-session sets Secure cookies correctly
+app.set("trust proxy", 1);
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
@@ -202,7 +204,7 @@ app.get("/auth/google/callback", async (req, res) => {
   // Same origin (production): session cookie is set on this response, redirect directly.
   // Different origin (local dev: backend :8080, frontend :3000): use one-time token handoff.
   // #region agent log
-  console.log(`[DEBUG oauth-cb] sameOrigin=${APP_URL===FRONTEND_URL} sid=${req.sessionID} pid=${process.pid} email=${user.email}`);
+  console.log(`[DEBUG oauth-cb] sameOrigin=${APP_URL===FRONTEND_URL} sid=${req.sessionID} pid=${process.pid} email=${user.email} proto=${req.protocol} secure=${req.secure}`);
   // #endregion
   if (APP_URL === FRONTEND_URL) {
     return req.session.save((err) => {
