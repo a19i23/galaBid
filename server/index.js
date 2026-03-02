@@ -156,8 +156,11 @@ app.get("/auth/google/callback", async (req, res) => {
   );
   const user = rows[0];
   req.session.user = user;
-  // When frontend is on a different origin (e.g. :3000), cookie set here wouldn't be sent from :3000.
-  // Redirect with a one-time token; frontend POSTs it to /auth/session and gets the cookie on that response.
+  // Same origin (production): session cookie is set on this response, redirect directly.
+  // Different origin (local dev: backend :8080, frontend :3000): use one-time token handoff.
+  if (APP_URL === FRONTEND_URL) {
+    return req.session.save(() => res.redirect(FRONTEND_URL));
+  }
   const handoff = createHandoffToken(user);
   res.redirect(`${FRONTEND_URL}${FRONTEND_URL.includes("?") ? "&" : "?"}session=${handoff}`);
 });

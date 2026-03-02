@@ -2,7 +2,6 @@ app = "galabid"
 primary_region = "lax"
 
 [build]
-  builder = "heroku/buildpacks:20"
 
 [env]
   NODE_ENV = "production"

@@ -36,17 +36,6 @@ INSERT INTO settings (key, value) VALUES
   ('admin_message', '')
 ON CONFLICT (key) DO NOTHING;
 
--- Seed items (delete these and add your real items)
-INSERT INTO auction_items (title, category, description, emoji, min_bid, current_bid, increment) VALUES
-  ('Weekend Getaway – Big Bear Cabin',  'Travel',        '2-night stay for up to 8 guests in a luxury mountain setting.',            '🏔️', 500, 500, 25),
-  ('Chef''s Table Dinner for 6',         'Dining',        'Private 5-course dinner prepared by Chef Marco at your home.',             '🍽️', 350, 350, 25),
-  ('Disneyland 4-Pack',                  'Entertainment', '4 one-day park hopper tickets. Valid through Dec 2025.',                   '🎢', 600, 600, 25),
-  ('Principal for a Day',                'School',        'Your child runs the school for a day — morning news, lunch pick & more!',  '🏫', 150, 150, 10),
-  ('Private Surf Lesson (4 ppl)',        'Experiences',   '2-hour surf lesson with pro instructor at Malibu. Boards included.',       '🏄', 200, 200, 10),
-  ('Spa Day for Two',                    'Wellness',      'Full day at Spa Montage — facials, massages, and all amenities.',          '🧖', 400, 400, 25),
-  ('Lakers Floor Seats (2)',             'Sports',        'Two floor seats to a home Lakers game. Row 3, center court.',             '🏀', 800, 800, 50),
-  ('Art Class Package',                  'School',        '10-week private art lessons with our school''s beloved art teacher.',      '🎨', 100, 100, 10)
-ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS payments (
   id                    SERIAL PRIMARY KEY,
